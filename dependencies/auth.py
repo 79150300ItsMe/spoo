@@ -123,7 +123,12 @@ async def get_current_user(
         if claims.get("type") == "refresh":
             return None
         user_id = ObjectId(claims["sub"])
-        email_verified = bool(claims.get("email_verified", False))
+        # Read email_verified from database for accuracy (admin may update it directly)
+        try:
+            user = await UserRepository(db["users"]).find_by_id(user_id)
+            email_verified = user.email_verified if user else bool(claims.get("email_verified", False))
+        except Exception:
+            email_verified = bool(claims.get("email_verified", False))
         structlog.contextvars.bind_contextvars(user_id=str(user_id), auth_method="jwt")
         return CurrentUser(user_id=user_id, email_verified=email_verified)
     except Exception:
