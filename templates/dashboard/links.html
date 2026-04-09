@@ -19,6 +19,10 @@
             <p class="page-subtitle">View, filter, and organize all your shortened links below.</p>
         </div>
         <div class="page-header-actions">
+            <button class="btn btn-secondary" id="btn-bulk-create" style="margin-right:8px;background:rgba(139,92,246,.15);border:1px solid rgba(139,92,246,.3);color:#a78bfa;">
+                <i class="ti ti-layers-linked"></i>
+                <span>Bulk Create</span>
+            </button>
             <button class="btn btn-primary" id="btn-create-link">
                 <i class="ti ti-plus"></i>
                 <span>Create Link</span>
@@ -604,12 +608,231 @@
     </div>
 </div>
 
+<!-- Bulk Create Modal -->
+<div id="bulk-create-modal" class="modal">
+    <div class="modal-backdrop"></div>
+    <div class="modal-container">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title-section">
+                    <h2 class="modal-title">Bulk Create Links</h2>
+                    <p class="modal-subtitle">Shorten multiple URLs at once — one URL per line (max 50)</p>
+                </div>
+                <button class="modal-close" type="button" aria-label="Close modal" onclick="closeBulkModal()">
+                    <i class="ti ti-x"></i>
+                </button>
+            </div>
+
+            <div class="modal-body">
+                <div class="form-grid">
+                    <div class="field">
+                        <label for="bulk-urls-input">Paste URLs (one per line)</label>
+                        <textarea id="bulk-urls-input" rows="12" placeholder="https://example.com/page1&#10;https://example.com/page2&#10;https://example.com/page3&#10;..." style="width:100%;font-family:'Inter',monospace;font-size:13px;line-height:1.6;resize:vertical;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:14px;color:#e2e8f0;transition:border-color .2s;"></textarea>
+                        <small class="field-hint"><span id="bulk-url-count">0</span> URLs detected &nbsp;•&nbsp; Max 50 per batch</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeBulkModal()">
+                    <span>Cancel</span>
+                </button>
+                <button type="button" class="btn btn-primary" id="btn-bulk-submit" disabled>
+                    <i class="ti ti-bolt"></i>
+                    <span>Shorten All</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk Results Modal -->
+<div id="bulk-results-modal" class="modal">
+    <div class="modal-backdrop"></div>
+    <div class="modal-container" style="max-width:720px;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title-section">
+                    <h2 class="modal-title">Bulk Results</h2>
+                    <p class="modal-subtitle" id="bulk-results-subtitle"></p>
+                </div>
+                <button class="modal-close" type="button" aria-label="Close modal" onclick="closeBulkResultsModal()">
+                    <i class="ti ti-x"></i>
+                </button>
+            </div>
+
+            <div class="modal-body" style="max-height:450px;overflow-y:auto;">
+                <div id="bulk-results-list"></div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="btn-bulk-copy-all">
+                    <i class="ti ti-copy"></i>
+                    <span>Copy All Short URLs</span>
+                </button>
+                <button type="button" class="btn btn-primary" onclick="closeBulkResultsModal()">
+                    <span>Done</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
     // Pass host URL to the dashboard script
     window.dashboardConfig = {
         hostUrl: "{{ host_url }}"
     };
+
+    // ── Bulk Create Logic ─────────────────────────────────────────────
+    (function() {
+        const bulkBtn = document.getElementById('btn-bulk-create');
+        const bulkModal = document.getElementById('bulk-create-modal');
+        const bulkTextarea = document.getElementById('bulk-urls-input');
+        const bulkCount = document.getElementById('bulk-url-count');
+        const bulkSubmit = document.getElementById('btn-bulk-submit');
+        const resultsModal = document.getElementById('bulk-results-modal');
+        const resultsList = document.getElementById('bulk-results-list');
+        const resultsSubtitle = document.getElementById('bulk-results-subtitle');
+        const copyAllBtn = document.getElementById('btn-bulk-copy-all');
+
+        let lastResults = [];
+
+        function getUrls() {
+            return bulkTextarea.value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        }
+
+        bulkTextarea.addEventListener('input', function() {
+            const urls = getUrls();
+            bulkCount.textContent = urls.length;
+            bulkSubmit.disabled = urls.length === 0 || urls.length > 50;
+        });
+
+        bulkBtn.addEventListener('click', function() {
+            bulkModal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+            bulkTextarea.value = '';
+            bulkCount.textContent = '0';
+            bulkSubmit.disabled = true;
+            setTimeout(() => bulkTextarea.focus(), 100);
+        });
+
+        window.closeBulkModal = function() {
+            bulkModal.classList.remove('active');
+            document.body.style.overflow = '';
+        };
+
+        window.closeBulkResultsModal = function() {
+            resultsModal.classList.remove('active');
+            document.body.style.overflow = '';
+            if (typeof window.fetchData === 'function') window.fetchData();
+        };
+
+        bulkModal.querySelector('.modal-backdrop').addEventListener('click', window.closeBulkModal);
+        resultsModal.querySelector('.modal-backdrop').addEventListener('click', window.closeBulkResultsModal);
+
+        bulkSubmit.addEventListener('click', async function() {
+            const urls = getUrls();
+            if (urls.length === 0 || urls.length > 50) return;
+
+            bulkSubmit.disabled = true;
+            bulkSubmit.innerHTML = '<i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> <span>Processing...</span>';
+
+            try {
+                const doFetch = (typeof window.authFetch === 'function') ? window.authFetch : fetch;
+                const res = await doFetch('/api/v1/bulk-shorten', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ urls: urls.map(u => ({ url: u })) })
+                });
+                const data = await res.json();
+                lastResults = data.results || [];
+
+                // Close bulk input modal
+                window.closeBulkModal();
+
+                // Show results
+                resultsSubtitle.textContent = `${data.success_count} succeeded, ${data.error_count} failed out of ${data.total} URLs`;
+                resultsList.innerHTML = '';
+
+                lastResults.forEach(r => {
+                    const row = document.createElement('div');
+                    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;margin-bottom:6px;font-size:13px;' +
+                        (r.success ? 'background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.15)' : 'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.15)');
+
+                    if (r.success) {
+                        row.innerHTML = `
+                            <i class="ti ti-circle-check" style="color:#22c55e;font-size:18px;flex-shrink:0"></i>
+                            <div style="flex:1;min-width:0">
+                                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                                    <a href="${r.short_url}" target="_blank" rel="noopener" style="color:#a78bfa;font-weight:600;text-decoration:none">${r.short_url}</a>
+                                    <span style="color:rgba(255,255,255,.35)">←</span>
+                                    <span style="color:rgba(255,255,255,.5);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px" title="${r.long_url}">${r.long_url}</span>
+                                </div>
+                            </div>
+                            <button class="copy-single-btn" data-url="${r.short_url}" style="background:none;border:none;color:#a78bfa;cursor:pointer;padding:4px;flex-shrink:0" title="Copy">
+                                <i class="ti ti-copy" style="font-size:16px"></i>
+                            </button>`;
+                    } else {
+                        row.innerHTML = `
+                            <i class="ti ti-circle-x" style="color:#ef4444;font-size:18px;flex-shrink:0"></i>
+                            <div style="flex:1;min-width:0">
+                                <div style="color:rgba(255,255,255,.7);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.long_url}">${r.long_url}</div>
+                                <div style="color:#ef4444;font-size:12px;margin-top:2px">${r.error}</div>
+                            </div>`;
+                    }
+                    resultsList.appendChild(row);
+                });
+
+                // Single copy buttons
+                resultsList.querySelectorAll('.copy-single-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        navigator.clipboard.writeText(this.dataset.url).then(() => {
+                            const icon = this.querySelector('i');
+                            icon.className = 'ti ti-check';
+                            setTimeout(() => icon.className = 'ti ti-copy', 1500);
+                        });
+                    });
+                });
+
+                resultsModal.classList.add('active');
+                document.body.style.overflow = 'hidden';
+
+                if (typeof showNotification === 'function') {
+                    showNotification(`${data.success_count} links created successfully!`, 'success');
+                }
+            } catch (err) {
+                if (typeof showNotification === 'function') {
+                    showNotification('Bulk shorten failed: ' + err.message, 'error');
+                }
+            } finally {
+                bulkSubmit.disabled = false;
+                bulkSubmit.innerHTML = '<i class="ti ti-bolt"></i> <span>Shorten All</span>';
+            }
+        });
+
+        copyAllBtn.addEventListener('click', function() {
+            const successUrls = lastResults.filter(r => r.success).map(r => r.short_url).join('\n');
+            navigator.clipboard.writeText(successUrls).then(() => {
+                const icon = copyAllBtn.querySelector('i');
+                const span = copyAllBtn.querySelector('span');
+                icon.className = 'ti ti-check';
+                span.textContent = 'Copied!';
+                setTimeout(() => { icon.className = 'ti ti-copy'; span.textContent = 'Copy All Short URLs'; }, 2000);
+                if (typeof showNotification === 'function') {
+                    showNotification('All short URLs copied to clipboard!', 'success');
+                }
+            });
+        });
+    })();
 </script>
+
+<style>
+    @keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+    #bulk-urls-input:focus { border-color: rgba(139,92,246,.5); outline: none; box-shadow: 0 0 0 3px rgba(139,92,246,.15); }
+    #btn-bulk-create:hover { background: rgba(139,92,246,.25) !important; border-color: rgba(139,92,246,.5) !important; }
+</style>
 {% endblock %}
 
 {% block scripts %}
