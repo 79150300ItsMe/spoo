@@ -616,7 +616,7 @@
             <div class="modal-header">
                 <div class="modal-title-section">
                     <h2 class="modal-title">Bulk Create Links</h2>
-                    <p class="modal-subtitle">Shorten multiple URLs at once — one URL per line (max 50)</p>
+                    <p class="modal-subtitle">Shorten multiple URLs at once with shared settings</p>
                 </div>
                 <button class="modal-close" type="button" aria-label="Close modal" onclick="closeBulkModal()">
                     <i class="ti ti-x"></i>
@@ -624,13 +624,91 @@
             </div>
 
             <div class="modal-body">
-                <div class="form-grid">
-                    <div class="field">
-                        <label for="bulk-urls-input">Paste URLs (one per line)</label>
-                        <textarea id="bulk-urls-input" rows="12" placeholder="https://example.com/page1&#10;https://example.com/page2&#10;https://example.com/page3&#10;..." style="width:100%;font-family:'Inter',monospace;font-size:13px;line-height:1.6;resize:vertical;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:14px;color:#e2e8f0;transition:border-color .2s;"></textarea>
-                        <small class="field-hint"><span id="bulk-url-count">0</span> URLs detected &nbsp;•&nbsp; Max 50 per batch</small>
+                <form id="bulk-create-form">
+                    <div class="tabs" data-active="0">
+                        <button type="button" class="tab active" data-tab="bulk-basic">
+                            <i class="ti ti-link"></i>
+                            <span>Basic</span>
+                        </button>
+                        <button type="button" class="tab" data-tab="bulk-security">
+                            <i class="ti ti-shield-lock"></i>
+                            <span>Security</span>
+                        </button>
+                        <button type="button" class="tab" data-tab="bulk-advanced">
+                            <i class="ti ti-settings"></i>
+                            <span>Advanced</span>
+                        </button>
                     </div>
-                </div>
+
+                    <div class="tab-content-container">
+                        <!-- Basic Tab -->
+                        <div class="tab-content active" data-tab="bulk-basic">
+                            <div class="form-grid">
+                                <div class="field">
+                                    <label for="bulk-urls-input">Destination URLs</label>
+                                    <textarea id="bulk-urls-input" rows="10" placeholder="https://example.com/page1&#10;https://example.com/page2&#10;https://example.com/page3&#10;..." style="width:100%;font-family:'Inter',monospace;font-size:13px;line-height:1.6;resize:vertical;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:14px;color:#e2e8f0;transition:border-color .2s;"></textarea>
+                                    <small class="field-hint"><span id="bulk-url-count">0</span> URLs detected &nbsp;•&nbsp; One URL per line &nbsp;•&nbsp; Max 50 per batch</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Security Tab -->
+                        <div class="tab-content" data-tab="bulk-security">
+                            <div class="form-grid">
+                                <div class="field">
+                                    <label for="bulk-password">Password Protection (optional)</label>
+                                    <input type="password" id="bulk-password" name="password"
+                                        placeholder="Enter password" autocomplete="new-password">
+                                    <small class="field-hint">Require users to enter a password to access all links</small>
+                                </div>
+
+                                <div class="field">
+                                    <div class="checkbox-field">
+                                        <input type="checkbox" id="bulk-private-stats" name="private_stats" checked>
+                                        <label for="bulk-private-stats" class="checkbox-label">
+                                            <span class="checkbox-indicator"></span>
+                                            <div class="checkbox-content">
+                                                <span class="checkbox-title">Private Statistics</span>
+                                                <small class="checkbox-desc">Hide click statistics from public view</small>
+                                            </div>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Advanced Tab -->
+                        <div class="tab-content" data-tab="bulk-advanced">
+                            <div class="form-grid">
+                                <div class="field">
+                                    <label for="bulk-max-clicks">Maximum Clicks (optional)</label>
+                                    <input type="number" id="bulk-max-clicks" name="max_clicks"
+                                        placeholder="Leave empty for unlimited" min="1">
+                                    <small class="field-hint">All links will be disabled after reaching this limit</small>
+                                </div>
+
+                                <div class="field">
+                                    <label for="bulk-expire-after">Expiration Date (optional)</label>
+                                    <input type="datetime-local" id="bulk-expire-after" name="expire_after">
+                                    <small class="field-hint">All links will be disabled after this date</small>
+                                </div>
+
+                                <div class="field">
+                                    <div class="checkbox-field">
+                                        <input type="checkbox" id="bulk-block-bots" name="block_bots" checked>
+                                        <label for="bulk-block-bots" class="checkbox-label">
+                                            <span class="checkbox-indicator"></span>
+                                            <div class="checkbox-content">
+                                                <span class="checkbox-title">Block Bots</span>
+                                                <small class="checkbox-desc">Prevent automated bot traffic from accessing these links</small>
+                                            </div>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
             </div>
 
             <div class="modal-footer">
@@ -698,6 +776,19 @@
 
         let lastResults = [];
 
+        // Tab switching for bulk modal
+        const bulkTabs = bulkModal.querySelectorAll('.tab[data-tab]');
+        const bulkContents = bulkModal.querySelectorAll('.tab-content[data-tab]');
+        bulkTabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                bulkTabs.forEach(t => t.classList.remove('active'));
+                bulkContents.forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+                const target = tab.getAttribute('data-tab');
+                bulkModal.querySelector(`.tab-content[data-tab="${target}"]`).classList.add('active');
+            });
+        });
+
         function getUrls() {
             return bulkTextarea.value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
         }
@@ -711,9 +802,18 @@
         bulkBtn.addEventListener('click', function() {
             bulkModal.classList.add('active');
             document.body.style.overflow = 'hidden';
+            // Reset form
             bulkTextarea.value = '';
             bulkCount.textContent = '0';
             bulkSubmit.disabled = true;
+            const form = document.getElementById('bulk-create-form');
+            if (form) form.reset();
+            // Reset to first tab
+            bulkTabs.forEach((t, i) => t.classList.toggle('active', i === 0));
+            bulkContents.forEach((c, i) => c.classList.toggle('active', i === 0));
+            // Re-check default checkboxes
+            document.getElementById('bulk-private-stats').checked = true;
+            document.getElementById('bulk-block-bots').checked = true;
             setTimeout(() => bulkTextarea.focus(), 100);
         });
 
@@ -738,21 +838,35 @@
             bulkSubmit.disabled = true;
             bulkSubmit.innerHTML = '<i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> <span>Processing...</span>';
 
+            // Gather shared settings
+            const password = document.getElementById('bulk-password').value || null;
+            const privateStats = document.getElementById('bulk-private-stats').checked;
+            const maxClicks = document.getElementById('bulk-max-clicks').value ? parseInt(document.getElementById('bulk-max-clicks').value) : null;
+            const expireAfter = document.getElementById('bulk-expire-after').value ? new Date(document.getElementById('bulk-expire-after').value).toISOString() : null;
+            const blockBots = document.getElementById('bulk-block-bots').checked;
+
+            const payload = {
+                urls: urls.map(u => ({ url: u })),
+                block_bots: blockBots,
+                private_stats: privateStats,
+            };
+            if (password) payload.password = password;
+            if (maxClicks) payload.max_clicks = maxClicks;
+            if (expireAfter) payload.expire_after = expireAfter;
+
             try {
                 const doFetch = (typeof window.authFetch === 'function') ? window.authFetch : fetch;
                 const res = await doFetch('/api/v1/bulk-shorten', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
-                    body: JSON.stringify({ urls: urls.map(u => ({ url: u })) })
+                    body: JSON.stringify(payload)
                 });
                 const data = await res.json();
                 lastResults = data.results || [];
 
-                // Close bulk input modal
                 window.closeBulkModal();
 
-                // Show results
                 resultsSubtitle.textContent = `${data.success_count} succeeded, ${data.error_count} failed out of ${data.total} URLs`;
                 resultsList.innerHTML = '';
 
@@ -785,7 +899,6 @@
                     resultsList.appendChild(row);
                 });
 
-                // Single copy buttons
                 resultsList.querySelectorAll('.copy-single-btn').forEach(btn => {
                     btn.addEventListener('click', function() {
                         navigator.clipboard.writeText(this.dataset.url).then(() => {

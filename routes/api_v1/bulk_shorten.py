@@ -3,6 +3,8 @@ POST /api/v1/bulk-shorten — create multiple shortened URLs in one request.
 
 Returns 200 with per-URL results (each URL can succeed or fail independently).
 Auth is optional; API key users require `shorten:create` or `admin:all` scope.
+Shared settings (password, block_bots, max_clicks, expire_after, private_stats)
+are applied uniformly to every URL in the batch.
 """
 
 from __future__ import annotations
@@ -16,11 +18,11 @@ from dependencies import (
     optional_scopes_verified,
 )
 from middleware.openapi import AUTH_RESPONSES, OPTIONAL_AUTH_SECURITY
-from middleware.rate_limiter import Limits, limiter
+from middleware.rate_limiter import limiter
 from schemas.dto.requests.bulk_url import BulkCreateUrlRequest
+from schemas.dto.requests.url import CreateUrlRequest
 from schemas.dto.responses.bulk_url import BulkShortenResponse, BulkUrlResultItem
 from services.url_service import UrlService
-from shared.datetime_utils import to_unix_timestamp
 from shared.ip_utils import get_client_ip
 from shared.logging import get_logger
 
@@ -47,19 +49,16 @@ async def bulk_shorten(
     """Create multiple shortened URLs in a single request.
 
     Submit up to **50 URLs** at once. Each URL is processed independently —
-    if one fails (e.g. invalid URL, alias conflict), the others still succeed.
+    if one fails (e.g. invalid URL), the others still succeed.
+
+    Shared settings (password, block_bots, max_clicks, expire_after,
+    private_stats) are applied to **all** URLs in the batch.
 
     **Authentication**: Optional — higher rate limits when authenticated.
 
     **API Key Scope**: `shorten:create` or `admin:all`
 
     **Rate Limits**: 5/minute
-
-    **Notes**:
-
-    - Each URL item follows the same schema as `POST /api/v1/shorten`
-    - Failed URLs include an `error` message in the response
-    - Results are returned in the same order as the input
     """
     owner_id = user.user_id if user is not None else None
     client_ip = get_client_ip(request)
@@ -70,9 +69,20 @@ async def bulk_shorten(
     success_count = 0
     error_count = 0
 
-    for i, url_req in enumerate(body.urls):
+    for i, url_item in enumerate(body.urls):
         try:
-            doc = await url_service.create(url_req, owner_id, client_ip)
+            # Build individual CreateUrlRequest with shared settings
+            create_req = CreateUrlRequest(
+                long_url=url_item.url,
+                alias=None,
+                password=body.password,
+                block_bots=body.block_bots,
+                max_clicks=body.max_clicks,
+                expire_after=body.expire_after,
+                private_stats=body.private_stats,
+            )
+
+            doc = await url_service.create(create_req, owner_id, client_ip)
             results.append(
                 BulkUrlResultItem(
                     index=i,
@@ -86,14 +96,13 @@ async def bulk_shorten(
             success_count += 1
         except Exception as exc:
             error_msg = str(exc)
-            # Extract clean error message from known error types
             if hasattr(exc, "message"):
                 error_msg = exc.message
             results.append(
                 BulkUrlResultItem(
                     index=i,
                     success=False,
-                    long_url=url_req.long_url,
+                    long_url=url_item.url,
                     error=error_msg,
                 )
             )
@@ -101,7 +110,7 @@ async def bulk_shorten(
             log.warning(
                 "bulk_shorten_item_failed",
                 index=i,
-                long_url=url_req.long_url,
+                long_url=url_item.url,
                 error=error_msg,
             )
 
